@@ -139,7 +139,7 @@ function getDOI(item) {
 }
 
 function getURL(item) {
-  let url = item.getField("URL");
+  let url = item.getField("url");
   if (url) {
     return `[${url}](${url})`;
   } else {
@@ -292,18 +292,20 @@ function getPDFFileLink(attachment) {
 }
 
 function getZoteroAttachments(item) {
+  const linkStylePref = getPref("pdf_link_style");
   let attachmentIDs = item.getAttachments();
   var linksArray = [];
   for (let id of attachmentIDs) {
     let attachment = Zotero.Items.get(id);
     if (attachment.attachmentContentType == "application/pdf") {
-      let linkContent;
-      if (getPref("pdf_link_style") === "zotero") {
-        linkContent = getZoteroPDFLink(attachment);
+      let link;
+      if (linkStylePref === "zotero") {
+        link = `[${attachment.getField("title")}](${getZoteroPDFLink(attachment)})`;
+      } else if (linkStylePref === "wiki") {
+        link = formatInternalLink(attachment.getField("title"), "wiki");
       } else {
-        linkContent = getPDFFileLink(attachment);
+        link = `[${attachment.getField("title")}](${getPDFFileLink(attachment)})`;
       }
-      var link = `[${attachment.getField("title")}](${linkContent})`;
       linksArray.push(link);
     }
   }
@@ -409,6 +411,7 @@ function getNCFileName(item, filePrefs) {
   } else {
     fileName = getFileName(item);
   }
+  fileName = Zotero.File.getValidFileName(fileName);
   let prefix = getPref("files." + filePrefs + ".prefix");
   let suffix = getPref("files." + filePrefs + ".suffix");
   return `${prefix}${fileName}${suffix}`;
@@ -712,12 +715,25 @@ function itemHasAttachment(comparableField, parentItem) {
   return linkExists;
 }
 
-async function addObsidianLink(outputFile, parentItem) {
+function getParentItem(item) {
+  let parentItem;
+
+  if (item.isNote()) {
+    parentItem = Zotero.Items.get(item.parentItemID);
+  } else {
+    parentItem = item;
+  }
+
+  return parentItem;
+}
+
+async function addObsidianLink(outputFile, item) {
   let fileName = outputFile.split("/").pop();
   fileName = fileName.split(".")[0];
   let obsidianURI = getObsidianURI(fileName);
+  let parentItem = getParentItem(item);
 
-  if (!itemHasAttachment(obsidianURI, parentItem)) {
+  if (!itemHasAttachment(obsidianURI, parentItem) && getPref("obsidian.attach_obsidian_uri")) {
     await Zotero.Attachments.linkFromURL({
       url: obsidianURI,
       contentType: "x-scheme-handler/obsidian",
@@ -760,29 +776,19 @@ Zotero.Mdnotes =
       Zotero.Prefs.set(`extensions.mdnotes.${pref_name}`, value, true);
     }
 
-    async addLinkToMDNote(outputFile, parentItem) {
-      let existingAttachments = parentItem.getAttachments();
-      let linkExists = false;
+    async addLinkToMDNote(outputFile, item) {
+      let parentItem = getParentItem(item);
 
-      for (let id of existingAttachments) {
-        let attachment = Zotero.Items.get(id);
-
-        if (attachment.attachmentPath === outputFile) {
-          attachment.setField(
-            "dateModified",
-            Zotero.Date.dateToSQL(new Date())
-          );
-          linkExists = true;
-          break;
-        }
-      }
-
-      if (!linkExists && getPref("attach_to_zotero")) {
-        var attachmentFile = await Zotero.Attachments.linkFromFile({
+      if (
+        !itemHasAttachment(outputFile, parentItem) &&
+        getPref("attach_to_zotero")
+      ) {
+        await Zotero.Attachments.linkFromFile({
           file: outputFile,
           parentItemID: parentItem.id,
         });
       }
+
     }
 
     async createNoteFileMenu(standalone) {
